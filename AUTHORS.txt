@@ -1,0 +1,5 @@
+(* OASIS_START *)
+(* DO NOT EDIT (digest: e50db38d140321f4b931ed21db6d1923) *)
+Authors of parallel
+Ivan Gotovchits <ivg@ieee.org>
+(* OASIS_STOP *)
