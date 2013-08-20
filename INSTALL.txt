@@ -1,5 +1,5 @@
 (* OASIS_START *)
-(* DO NOT EDIT (digest: 20dd02548cf230bbc9b1e84a6f559d26) *)
+(* DO NOT EDIT (digest: 4c4c0fe9898100dc3be0529f78d78db4) *)
 This is the INSTALL file for the parallel distribution.
 
 This package uses OASIS to generate its build system. See section OASIS for
@@ -12,6 +12,7 @@ In order to compile this package, you will need:
 * ocaml
 * findlib
 * lwt for library parallel
+* fileutils for library parallel
 
 Installing
 ==========

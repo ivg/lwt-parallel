@@ -22,8 +22,12 @@ let master = ref None
 
 let pid = Unix.getpid ()
 
-let file_name pid = Printf.sprintf "/tmp/parallax-%d" pid
-let socket_name pid = Unix.ADDR_UNIX (file_name pid)
+let socket_name pid =
+  let open FilePath in
+  let base = chop_extension (basename Sys.executable_name) in
+  let name = Printf.sprintf "%s-%d" base pid in
+  let path = make_absolute "/tmp" name in
+  Unix.ADDR_UNIX path
 
 let init_master (ofd,tfd,ack,syn) =
   master := Some {ofd;tfd;ack;syn;lck = Lwt_mutex.create ()}
@@ -144,6 +148,7 @@ let create_master () =
   | pid ->
     Unix.(List.iter close [of_main; to_main; syn_req; put_ack]);
     of_master,to_master,syn_ack,req_ack
+
 
 let init () =
   let fds = create_master () in

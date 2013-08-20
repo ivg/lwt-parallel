@@ -1,8 +1,8 @@
 # OASIS_START
-# DO NOT EDIT (digest: 6083ec88b24ae0395e40bedca1c038a2)
+# DO NOT EDIT (digest: 2b9450486012b10a7f4101103e4a7a9a)
 version = "0.1.0"
 description = "Lwt-enabled parallel computing library"
-requires = "lwt lwt.unix lwt.syntax"
+requires = "lwt lwt.unix lwt.syntax fileutils"
 archive(byte) = "parallel.cma"
 archive(byte, plugin) = "parallel.cma"
 archive(native) = "parallel.cmxa"
