@@ -7,32 +7,48 @@ exception Error
 type 'a t = 'a Lwt_stream.t
 type ('a,'b) pipe = ('a Lwt_stream.t * ('b option -> unit))
 
+type syn = Syn
+type ack = Ack
+
+type 'c master = {
+  ofd: 'c;
+  tfd: 'c;
+  ack: 'c;
+  syn: 'c;
+  lck: Lwt_mutex.t;
+}
 
 let master = ref None
 
-let init_master ofd tfd =
-  master := Some (ofd,tfd,Lwt_mutex.create ())
-
-let run_transaction (ofd,tfd,guard) f =
-  let of_unix_fd = Lwt_unix.of_unix_file_descr ~blocking:true in
-  let ofd,tfd = of_unix_fd ofd, of_unix_fd tfd in
-  let lock () =
-    Lwt_unix.(lockf tfd F_LOCK 0 >> lockf ofd F_RLOCK 0) in
-  let unlock () =
-    Lwt_unix.(lockf tfd F_ULOCK 0 >> lockf ofd F_ULOCK 0) in
-  try_lwt
-    let of_master = Lwt_io.(of_fd  ~mode:input  ofd) in
-    let to_master = Lwt_io.(of_fd  ~mode:output tfd) in
-    lwt () = lock () in
-    lwt r = Lwt_mutex.with_lock guard (fun () -> f of_master to_master) in
-    lwt () = Lwt_io.flush to_master in
-    lwt () = unlock () in
-    return r
-  with exn -> error ~exn "master i/o" >> unlock () >> fail exn
-
+let pid = Unix.getpid ()
 
 let file_name pid = Printf.sprintf "/tmp/parallax-%d" pid
 let socket_name pid = Unix.ADDR_UNIX (file_name pid)
+
+let init_master (ofd,tfd,ack,syn) =
+  master := Some {ofd;tfd;ack;syn;lck = Lwt_mutex.create ()}
+
+let buffered_io m =
+  let of_unix_fd mode fd =
+    let fd = Lwt_unix.of_unix_file_descr ~blocking:true fd in
+    Lwt_io.of_fd ~mode fd in
+  of_unix_fd Lwt_io.input  m.ofd,
+  of_unix_fd Lwt_io.output m.tfd,
+  of_unix_fd Lwt_io.input  m.ack,
+  of_unix_fd Lwt_io.output m.syn
+
+
+let run_transaction m f =
+  let transaction () =
+    try_lwt
+      let ofd,tfd,ack,syn = buffered_io m in
+      lwt ()  = Lwt_io.(write_value syn Syn >> flush syn) in
+      lwt Ack = Lwt_io.read_value ack in
+      lwt r  = f ofd tfd in
+      lwt () = Lwt_io.flush tfd in
+      return r
+    with exn -> error ~exn "master i/o" >> fail exn in
+  Lwt_mutex.with_lock m.lck transaction
 
 let shutdown fd cmd =
   try
@@ -101,30 +117,37 @@ let reap n = ignore (Unix.wait ())
 let create_master () =
   let of_master,to_main = Unix.pipe () in
   let of_main,to_master = Unix.pipe () in
+  let syn_req,req_ack   = Unix.pipe () in
+  let syn_ack,put_ack   = Unix.pipe () in
   flush_all ();
   match Lwt_unix.fork () with
   | 0 ->
-    init_master of_master to_master;
+    init_master (of_master,to_master,syn_ack,req_ack);
     Sys.set_signal Sys.sigchld (Sys.Signal_handle reap);
     let of_main = Unix.in_channel_of_descr  of_main in
     let to_main = Unix.out_channel_of_descr to_main in
+    let syn_req = Unix.in_channel_of_descr  syn_req in
+    let put_ack = Unix.out_channel_of_descr put_ack in
     let rec loop () =
       let () = try
+          let Syn  = Marshal.from_channel syn_req in
+          Marshal.to_channel put_ack Ack [];
+          flush put_ack;
           let proc = (Marshal.from_channel of_main) in
           let addr = create_worker proc in
           Marshal.to_channel to_main addr [];
-          flush_all ();
+          flush to_main;
         with End_of_file -> exit 0
            | exn         -> exit 1 in
       loop () in
     loop ()
   | pid ->
-    Unix.(List.iter close [of_main; to_main]);
-    of_master,to_master
+    Unix.(List.iter close [of_main; to_main; syn_req; put_ack]);
+    of_master,to_master,syn_ack,req_ack
 
 let init () =
-  let of_master, to_master = create_master () in
-  init_master of_master to_master
+  let fds = create_master () in
+  init_master fds
 
 let unlink addr =
   try_lwt
