@@ -104,7 +104,9 @@ let worker_thread exec =
     async (fun () -> (recv_t <&> send_t) >> conn#close);
     exec_t in
   let sock = Lwt_unix.(socket PF_UNIX SOCK_STREAM 0) in
-  Lwt_unix.bind sock (socket_name (Unix.getpid ()));
+  let () = try
+      Lwt_unix.bind sock (socket_name (Unix.getpid ()))
+    with exn -> ign_error ~exn "bind failed" in
   Lwt_unix.listen sock 0;
   lwt fd,addr = Lwt_unix.accept sock in
   work fd
@@ -154,7 +156,7 @@ let init () =
   let fds = create_master () in
   init_master fds
 
-let unlink addr =
+let unlink_addr addr =
   try_lwt
     let open Lwt_unix in match addr with
     | ADDR_UNIX filename -> unlink filename
@@ -162,16 +164,20 @@ let unlink addr =
   with exn -> error ~exn "unlink failed"
 
 let open_connection addr =
+  let open Unix in
   let rec loop () =
-    let fd = Lwt_unix.socket
-        (Unix.domain_of_sockaddr addr) Unix.SOCK_STREAM 0 in
+    let fd = Lwt_unix.socket (domain_of_sockaddr addr) SOCK_STREAM 0 in
     try_lwt
       lwt () = Lwt_unix.connect fd addr in
       return fd
-    with exn ->
-      Lwt_unix.close fd >> loop () in
-  lwt fd = loop () in
-  unlink addr >> return (make_connection fd)
+    with Unix_error (ENOENT,_,_) -> Lwt_unix.close fd >> loop ()
+       | exn -> error ~exn "cannot open connection" >> fail exn in
+  let getfd = loop () >|= (fun fd -> `Socket fd) in
+  let timer = Lwt_unix.sleep 5. >> return `Timeout in
+  lwt fd = match_lwt getfd <?> timer with
+    | `Socket fd -> return fd
+    | `Timeout -> fail (Unix_error (ENOENT, "open_connection","timeout")) in
+  unlink_addr addr >> return (make_connection fd)
 
 let create_client f io =
   let astream,apush = Lwt_stream.create () in
