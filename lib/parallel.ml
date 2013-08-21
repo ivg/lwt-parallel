@@ -166,17 +166,20 @@ let unlink_addr addr =
 let open_connection addr =
   let open Unix in
   let rec loop () =
-    let fd = Lwt_unix.socket (domain_of_sockaddr addr) SOCK_STREAM 0 in
+    let fd =
+      Lwt_unix.socket (domain_of_sockaddr addr) SOCK_STREAM 0 in
     try_lwt
       lwt () = Lwt_unix.connect fd addr in
       return fd
-    with Unix_error (ENOENT,_,_) -> Lwt_unix.close fd >> loop ()
+    with Unix_error (ENOENT,_,_)
+       | Unix_error (ECONNREFUSED,_,_) -> Lwt_unix.close fd >> loop ()
        | exn -> error ~exn "cannot open connection" >> fail exn in
   let getfd = loop () >|= (fun fd -> `Socket fd) in
   let timer = Lwt_unix.sleep 5. >> return `Timeout in
   lwt fd = match_lwt getfd <?> timer with
     | `Socket fd -> return fd
-    | `Timeout -> fail (Unix_error (ENOENT, "open_connection","timeout")) in
+    | `Timeout ->
+      fail (Unix_error (ETIMEDOUT, "open_connection","timeout")) in
   unlink_addr addr >> return (make_connection fd)
 
 let create_client f io =
