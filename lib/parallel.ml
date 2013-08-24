@@ -118,7 +118,13 @@ let create_worker exec =
     | pid -> socket_name pid
 
 
-let reap n = ignore (Unix.wait ())
+let rec reap n =
+  try
+    match Unix.waitpid [Unix.WNOHANG] (-1) with
+    | 0,_ -> ()
+    | _   -> reap n
+  with Unix.Unix_error (Unix.ECHILD,_,_) -> ()
+     | exn -> ign_error ~exn "reap failed"
 
 let create_master () =
   let of_master,to_main = Unix.pipe () in

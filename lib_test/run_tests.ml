@@ -6,7 +6,7 @@ let setup_logger () =
   let logger = Lwt_log.channel
     (* ~facility:`User *)
     ~close_mode:`Keep
-    ~template:"parallax-$pid:$(date).$(milliseconds) $(section): $(message)"
+    ~template:"parallel-$pid:$(date).$(milliseconds) $(section): $(message)"
     ~channel:Lwt_io.stderr
     (* ~file_name:"parallax.log" *)
     () in
@@ -15,53 +15,33 @@ let setup_logger () =
 let _ = setup_logger ()
 let _ = Parallel.init ()
 
+let seed = [| 7; 8; 42; 56 |]
+let tasks = 128
+let task_size = 4096
 
-let simpliest_test () =
-  ign_notice "Starting simple test";
-  let sum = (Parallel.run (fun (a,b) ->
-      ign_notice_f "executing sum %g + %g" a b;
-      return (a +. b))) in
-  let sum' = Parallel.run (fun (a,b) -> return (a +. b)) in
-  lwt r = sum' (12.,14.) in
-  lwt s = sum  (13.,15.) in
-  Lwt_io.printf "a + b = %g > c + d = %g\n" r s
+let task (data,push) =
+  match_lwt Lwt_stream.next data with
+  | `Start state ->
+    lwt () = Lwt_unix.sleep (Random.float 4.) in
+    let array = Array.init task_size (fun _ -> Random.State.int state 100) in
+    let res = Array.fold_left
+      (fun acc v -> if Random.State.bool state then acc + v else acc - v )
+      0 array in
+    return (push (Some res))
+  | `Stop -> return (push None)
 
-let stream_test () =
-  let rec exec (data,push) =
-    Lwt_stream.iter_s (fun size ->
-      let nums = Array.init size (fun n -> n) in
-      return (Array.iter (fun n -> push (Some n)) nums)) data in
-  let results,push = Parallel.process exec in
-  let sizes = Array.init 100 (fun n -> n + 1) in
-  Array.iter (fun n -> push (Some n)) sizes;
-  push None;
-  Lwt_stream.iter_s (fun n ->
-      if n + 1 = 100
-      then Lwt_io.printf "finishing\n"
-      else return ()) results
+let spawn_task time =
+  lwt () = Lwt_unix.sleep time in
+  let state = Random.State.make seed in
+  let result,command = Parallel.process task in
+  command (Some (`Start state));
+  command (Some `Stop);
+  Lwt_stream.get result
 
-let process_in_process () =
-  let sum = (
-    Parallel.run (fun (a,b) ->
-        let plus = Parallel.run (fun b -> return (a +. b)) in
-        plus b)) in
-  sum (12.,13.) >>= Lwt_io.printf "%g\n"
+let main_dispatcher () =
+  let delays = Array.to_list (Array.init tasks (fun _ -> Random.float 4.)) in
+  match_lwt Lwt_list.map_p spawn_task delays with
+  | Some r :: rs -> return (List.for_all (fun r' -> Some r = r') rs)
+  | _ -> return_false
 
-let _ = Lwt_main.run (
-    join [simpliest_test (); stream_test (); simpliest_test ()]
-    >>
-    simpliest_test ()
-    >>
-    stream_test ()
-    >> Lwt_io.flush_all ())
-
-let _ = Lwt_main.run (
-    join [process_in_process (); simpliest_test (); stream_test (); simpliest_test ()] >>
-    process_in_process () >>
-    simpliest_test () >>
-    process_in_process () >>
-    process_in_process () >>
-    stream_test () >>
-    process_in_process () >>
-    process_in_process () >>
-    Lwt_io.flush_all ())
+let _ = Lwt_main.run (main_dispatcher () >>= Lwt_io.printf "%b")
