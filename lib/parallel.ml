@@ -23,10 +23,10 @@ let master = ref None
 let pid = Unix.getpid ()
 
 let socket_name pid =
-  let open FilePath in
+  let open Filename in
   let base = chop_extension (basename Sys.executable_name) in
   let name = Printf.sprintf "%s-%d" base pid in
-  let path = make_absolute "/tmp" name in
+  let path = concat "/tmp" name in
   Unix.ADDR_UNIX path
 
 let init_master (ofd,tfd,ack,syn) =
