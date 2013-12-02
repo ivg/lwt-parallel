@@ -7,52 +7,77 @@ exception Error
 type 'a t = 'a Lwt_stream.t
 type ('a,'b) pipe = ('a Lwt_stream.t * ('b option -> unit))
 
-type syn = Syn
-type ack = Ack
+let make_name ?(suffix="") pid =
+  let open Filename in
+  let base = basename Sys.executable_name in
+  let base =
+    try chop_extension base with Invalid_argument _ -> base in
+  let name = Printf.sprintf "%s-%d%s" base pid suffix in
+  concat "/tmp" name
+
+
+let socket_name pid = Unix.ADDR_UNIX (make_name pid)
+
+
+
+module Mutex : sig
+  type t
+  val create: int -> t
+  val with_lock: t -> (unit -> 'a Lwt.t) -> 'a Lwt.t
+
+end = struct
+  type t = {
+    p_guard : Lwt_unix.file_descr;
+    t_guard : Lwt_mutex.t
+  }
+
+  let create pid =
+    let name = make_name ~suffix:".lock" pid in
+    let fd = Unix.(openfile name [O_WRONLY; O_CREAT] 0o200) in
+    {
+      p_guard = Lwt_unix.of_unix_file_descr fd;
+      t_guard = Lwt_mutex.create ();
+    }
+
+  let lock_p fd = Lwt_unix.(lockf fd F_LOCK 1)
+  let unlock_p fd = Lwt_unix.(lockf fd F_ULOCK 1)
+
+  let with_p_lock fd f =
+    lwt () = lock_p fd in
+    lwt r = try_lwt f () with exn -> unlock_p fd >> fail exn in
+    unlock_p fd >> return r
+
+  let with_lock m f =
+    Lwt_mutex.with_lock m.t_guard (fun () -> with_p_lock m.p_guard f)
+end
 
 type 'c master = {
   ofd: 'c;
   tfd: 'c;
-  ack: 'c;
-  syn: 'c;
-  lck: Lwt_mutex.t;
+  lck: Mutex.t;
 }
 
 let master = ref None
 
 let pid = Unix.getpid ()
 
-let socket_name pid =
-  let open Filename in
-  let base = chop_extension (basename Sys.executable_name) in
-  let name = Printf.sprintf "%s-%d" base pid in
-  let path = concat "/tmp" name in
-  Unix.ADDR_UNIX path
-
-let init_master (ofd,tfd,ack,syn) =
-  master := Some {ofd;tfd;ack;syn;lck = Lwt_mutex.create ()}
+let init_master (ofd,tfd) pid =
+  master := Some {ofd;tfd;lck = Mutex.create pid}
 
 let buffered_io m =
   let of_unix_fd mode fd =
     let fd = Lwt_unix.of_unix_file_descr ~blocking:true fd in
     Lwt_io.of_fd ~mode fd in
   of_unix_fd Lwt_io.input  m.ofd,
-  of_unix_fd Lwt_io.output m.tfd,
-  of_unix_fd Lwt_io.input  m.ack,
-  of_unix_fd Lwt_io.output m.syn
-
+  of_unix_fd Lwt_io.output m.tfd
 
 let run_transaction m f =
   let transaction () =
     try_lwt
-      let ofd,tfd,ack,syn = buffered_io m in
-      lwt ()  = Lwt_io.(write_value syn Syn >> flush syn) in
-      lwt Ack = Lwt_io.read_value ack in
-      lwt r  = f ofd tfd in
-      lwt () = Lwt_io.flush tfd in
-      return r
+      let ofd,tfd = buffered_io m in
+      f ofd tfd
     with exn -> error ~exn "master i/o" >> fail exn in
-  Lwt_mutex.with_lock m.lck transaction
+  Mutex.with_lock m.lck transaction
 
 let shutdown fd cmd =
   try
@@ -79,7 +104,7 @@ let make_connection fd =
 let write_value fd v =
   try_lwt
     Lwt_io.write_value ~flags:[Marshal.Closures] fd v
-    >> Lwt_io.flush_all ()
+    >> Lwt_io.flush fd
   with exn -> error ~exn "write_value failed"
 
 let worker_thread exec =
@@ -93,7 +118,9 @@ let worker_thread exec =
        | exn  -> error ~exn "Process exited with"
     finally return (push None) in
   let send to_fd of_stream =
-    Lwt_stream.iter_s (write_value to_fd) of_stream in
+    try_lwt
+      Lwt_stream.iter_s (write_value to_fd) of_stream
+    with exn -> error ~exn "parallel write failed" in
   let work fd =
     let conn = make_connection fd in
     let astream,apush = Lwt_stream.create () in
@@ -114,7 +141,10 @@ let worker_thread exec =
 let create_worker exec =
   flush_all ();
   match Lwt_unix.fork () with
-    | 0  -> Lwt_main.run (worker_thread exec); exit 0
+    | 0  -> exit (Lwt_main.run (
+      try_lwt worker_thread exec
+      with exn -> error ~exn "Subprocess failed" >> return 1))
+
     | pid -> socket_name pid
 
 
@@ -126,25 +156,18 @@ let rec reap n =
   with Unix.Unix_error (Unix.ECHILD,_,_) -> ()
      | exn -> ign_error ~exn "reap failed"
 
-let create_master () =
+let init () =
   let of_master,to_main = Unix.pipe () in
   let of_main,to_master = Unix.pipe () in
-  let syn_req,req_ack   = Unix.pipe () in
-  let syn_ack,put_ack   = Unix.pipe () in
   flush_all ();
   match Lwt_unix.fork () with
   | 0 ->
-    init_master (of_master,to_master,syn_ack,req_ack);
+    init_master (of_master,to_master) (Unix.getpid ());
     Sys.set_signal Sys.sigchld (Sys.Signal_handle reap);
     let of_main = Unix.in_channel_of_descr  of_main in
     let to_main = Unix.out_channel_of_descr to_main in
-    let syn_req = Unix.in_channel_of_descr  syn_req in
-    let put_ack = Unix.out_channel_of_descr put_ack in
     let rec loop () =
       let () = try
-          let Syn  = Marshal.from_channel syn_req in
-          Marshal.to_channel put_ack Ack [];
-          flush put_ack;
           let proc = (Marshal.from_channel of_main) in
           let addr = create_worker proc in
           Marshal.to_channel to_main addr [];
@@ -154,13 +177,9 @@ let create_master () =
       loop () in
     loop ()
   | pid ->
-    Unix.(List.iter close [of_main; to_main; syn_req; put_ack]);
-    of_master,to_master,syn_ack,req_ack
+    Unix.(List.iter close [of_main; to_main]);
+    init_master (of_master,to_master) pid
 
-
-let init () =
-  let fds = create_master () in
-  init_master fds
 
 let unlink_addr addr =
   try_lwt
@@ -198,11 +217,12 @@ let create_client f io =
         bpush (Some b);
         loop () in
       try_lwt loop () with
-      | End_of_file -> return_unit
-      | exn -> error ~exn "Client died unexpectedly"
-      finally return (bpush None) in
+      | End_of_file -> return (bpush None)
+      | exn -> bpush None; error ~exn "Client died unexpectedly" in
     let pusher wo_chan =
-      Lwt_stream.iter_s (write_value wo_chan) astream in
+      try_lwt
+        Lwt_stream.iter_s (write_value wo_chan) astream
+      with exn -> error ~exn "parallel task failed" in
     let connect_to_client () =
       run_transaction io (fun of_master to_master ->
           lwt () = write_value to_master f in
@@ -210,7 +230,7 @@ let create_client f io =
           open_connection addr) in
     lwt chan = connect_to_client () in
     let pull_t = puller chan#ro >> chan#read_finished  in
-      let push_t = pusher chan#wo >> chan#write_finished in
+    let push_t = pusher chan#wo >> chan#write_finished in
     (pull_t <&> push_t) >> chan#close in
   async io_thread;
   bstream,apush
