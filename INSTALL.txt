@@ -1,18 +1,19 @@
 (* OASIS_START *)
-(* DO NOT EDIT (digest: 4c4c0fe9898100dc3be0529f78d78db4) *)
-This is the INSTALL file for the parallel distribution.
+(* DO NOT EDIT (digest: a51a7562576d46e1b5e75ff0a0b1f62c) *)
+
+This is the INSTALL file for the lwt_parallel distribution.
 
 This package uses OASIS to generate its build system. See section OASIS for
-full information. 
+full information.
 
 Dependencies
 ============
 
 In order to compile this package, you will need:
+
 * ocaml
 * findlib
-* lwt for library parallel
-* fileutils for library parallel
+* lwt for library lwt_parallel
 
 Installing
 ==========
@@ -25,7 +26,7 @@ Installing
 Uninstalling
 ============
 
-1. Go to the root of the package 
+1. Go to the root of the package
 2. Run 'ocaml setup.ml -uninstall'
 
 OASIS
