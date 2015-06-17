@@ -1,5 +1,5 @@
 OASISFormat: 0.3
-Name:        lwt_parallel
+Name:        lwt-parallel
 Version:     0.1.0
 Synopsis:    Lwt-enabled parallel computing library
 Authors:     Ivan Gotovchits <ivg@ieee.org>
