@@ -43,8 +43,8 @@ end = struct
   let unlock_p fd = Lwt_unix.(lockf fd F_ULOCK 1)
 
   let with_p_lock fd f =
-    lwt () = lock_p fd in
-    lwt r = try_lwt f () with exn -> unlock_p fd >> fail exn in
+    let%lwt () = lock_p fd in
+    let%lwt r = try%lwt f () with exn -> unlock_p fd >> fail exn in
     unlock_p fd >> return r
 
   let with_lock m f =
@@ -73,7 +73,7 @@ let buffered_io m =
 
 let run_transaction m f =
   let transaction () =
-    try_lwt
+    try%lwt
       let ofd,tfd = buffered_io m in
       f ofd tfd
     with exn -> error ~exn "master i/o" >> fail exn in
@@ -102,7 +102,7 @@ let make_connection fd =
   end
 
 let write_value fd v =
-  try_lwt
+  try%lwt
     Lwt_io.write_value ~flags:[Marshal.Closures] fd v
     >> Lwt_io.flush fd
   with exn -> error ~exn "write_value failed"
@@ -110,15 +110,15 @@ let write_value fd v =
 let worker_thread exec =
   let recv of_fd push =
     let rec loop () =
-      lwt a = Lwt_io.read_value of_fd in
+      let%lwt a = Lwt_io.read_value of_fd in
       push (Some a);
       loop () in
-    try_lwt loop ()
+    (try%lwt loop ()
     with End_of_file -> return_unit
-       | exn  -> error ~exn "Process exited with"
-    finally return (push None) in
+       | exn  -> error ~exn "Process exited with")
+    [%finally return (push None)] in
   let send to_fd of_stream =
-    try_lwt
+    try%lwt
       Lwt_stream.iter_s (write_value to_fd) of_stream
     with exn -> error ~exn "parallel write failed" in
   let work fd =
@@ -135,14 +135,14 @@ let worker_thread exec =
       Lwt_unix.bind sock (socket_name (Unix.getpid ()))
     with exn -> ign_error ~exn "bind failed" in
   Lwt_unix.listen sock 0;
-  lwt fd,addr = Lwt_unix.accept sock in
+  let%lwt fd,addr = Lwt_unix.accept sock in
   work fd
 
 let create_worker exec =
   flush_all ();
   match Lwt_unix.fork () with
     | 0  -> exit (Lwt_main.run (
-      try_lwt worker_thread exec
+      try%lwt worker_thread exec
       with exn -> error ~exn "Subprocess failed" >> return 1))
 
     | pid -> socket_name pid
@@ -182,7 +182,7 @@ let init () =
 
 
 let unlink_addr addr =
-  try_lwt
+  try%lwt
     let open Lwt_unix in match addr with
     | ADDR_UNIX filename -> unlink filename
     | ADDR_INET _ -> return_unit
@@ -193,15 +193,15 @@ let open_connection addr =
   let rec loop () =
     let fd =
       Lwt_unix.socket (domain_of_sockaddr addr) SOCK_STREAM 0 in
-    try_lwt
-      lwt () = Lwt_unix.connect fd addr in
+    try%lwt
+      let%lwt () = Lwt_unix.connect fd addr in
       return fd
     with Unix_error (ENOENT,_,_)
        | Unix_error (ECONNREFUSED,_,_) -> Lwt_unix.close fd >> loop ()
        | exn -> error ~exn "cannot open connection" >> fail exn in
   let getfd = loop () >|= (fun fd -> `Socket fd) in
   let timer = Lwt_unix.sleep 5. >> return `Timeout in
-  lwt fd = match_lwt getfd <?> timer with
+  let%lwt fd = match%lwt getfd <?> timer with
     | `Socket fd -> return fd
     | `Timeout ->
       fail (Unix_error (ETIMEDOUT, "open_connection","timeout")) in
@@ -213,22 +213,22 @@ let create_client f io =
   let io_thread () =
     let puller ro_chan =
       let rec loop () =
-        lwt b = Lwt_io.read_value ro_chan in
+        let%lwt b = Lwt_io.read_value ro_chan in
         bpush (Some b);
         loop () in
-      try_lwt loop () with
+      try%lwt loop () with
       | End_of_file -> return (bpush None)
       | exn -> bpush None; error ~exn "Client died unexpectedly" in
     let pusher wo_chan =
-      try_lwt
+      try%lwt
         Lwt_stream.iter_s (write_value wo_chan) astream
       with exn -> error ~exn "parallel task failed" in
     let connect_to_client () =
       run_transaction io (fun of_master to_master ->
-          lwt () = write_value to_master f in
-          lwt addr = Lwt_io.read_value of_master in
+          let%lwt () = write_value to_master f in
+          let%lwt addr = Lwt_io.read_value of_master in
           open_connection addr) in
-    lwt chan = connect_to_client () in
+    let%lwt chan = connect_to_client () in
     let pull_t = puller chan#ro >> chan#read_finished  in
     let push_t = pusher chan#wo >> chan#write_finished in
     (pull_t <&> push_t) >> chan#close in
@@ -250,3 +250,4 @@ let run exec =
         push (Some a);
         Lwt_stream.next stream) in
   master_f
+

@@ -20,9 +20,9 @@ let tasks = 128
 let task_size = 4096
 
 let task (data,push) =
-  match_lwt Lwt_stream.next data with
+  match%lwt Lwt_stream.next data with
   | `Start state ->
-    lwt () = Lwt_unix.sleep (Random.float 4.) in
+    let%lwt () = Lwt_unix.sleep (Random.float 4.) in
     let array = Array.init task_size (fun _ -> Random.State.int state 100) in
     let res = Array.fold_left
       (fun acc v -> if Random.State.bool state then acc + v else acc - v )
@@ -31,7 +31,7 @@ let task (data,push) =
   | `Stop -> return (push None)
 
 let spawn_task time =
-  lwt () = Lwt_unix.sleep time in
+  let%lwt () = Lwt_unix.sleep time in
   let state = Random.State.make seed in
   let result,command = Parallel.process task in
   command (Some (`Start state));
@@ -40,8 +40,9 @@ let spawn_task time =
 
 let main_dispatcher () =
   let delays = Array.to_list (Array.init tasks (fun _ -> Random.float 4.)) in
-  match_lwt Lwt_list.map_p spawn_task delays with
+  match%lwt Lwt_list.map_p spawn_task delays with
   | Some r :: rs -> return (List.for_all (fun r' -> Some r = r') rs)
   | _ -> return_false
 
 let _ = Lwt_main.run (main_dispatcher () >>= Lwt_io.printf "%b")
+
