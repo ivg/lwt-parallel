@@ -9,7 +9,7 @@ Plugins:     META (0.3), StdFiles (0.3), DevFiles (0.3)
 Library lwt_parallel
   Path:       lib
   BuildTools: ocamlbuild
-  BuildDepends: lwt, lwt.unix, lwt.syntax
+  BuildDepends: lwt, lwt.unix, lwt.ppx
   Modules:    Parallel
 
 Executable run_tests
