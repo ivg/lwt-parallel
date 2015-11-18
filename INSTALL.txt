@@ -1,7 +1,7 @@
 (* OASIS_START *)
-(* DO NOT EDIT (digest: a51a7562576d46e1b5e75ff0a0b1f62c) *)
+(* DO NOT EDIT (digest: ecef570af4ac8e19512c5b548a64dd18) *)
 
-This is the INSTALL file for the lwt_parallel distribution.
+This is the INSTALL file for the lwt-parallel distribution.
 
 This package uses OASIS to generate its build system. See section OASIS for
 full information.
@@ -13,7 +13,7 @@ In order to compile this package, you will need:
 
 * ocaml
 * findlib
-* lwt for library lwt_parallel
+* lwt for library lwt-parallel
 
 Installing
 ==========

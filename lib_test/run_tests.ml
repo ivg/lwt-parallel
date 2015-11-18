@@ -1,4 +1,3 @@
-
 open Lwt
 open Lwt_log
 
@@ -13,6 +12,7 @@ let setup_logger () =
   Lwt_log.default := logger
 
 let _ = setup_logger ()
+
 let _ = Parallel.init ()
 
 let seed = [| 7; 8; 42; 56 |]
@@ -20,9 +20,9 @@ let tasks = 128
 let task_size = 4096
 
 let task (data,push) =
-  match_lwt Lwt_stream.next data with
+  Lwt_stream.next data >>= function
   | `Start state ->
-    lwt () = Lwt_unix.sleep (Random.float 4.) in
+    Lwt_unix.sleep (Random.float 4.) >>= fun ()->
     let array = Array.init task_size (fun _ -> Random.State.int state 100) in
     let res = Array.fold_left
       (fun acc v -> if Random.State.bool state then acc + v else acc - v )
@@ -31,7 +31,7 @@ let task (data,push) =
   | `Stop -> return (push None)
 
 let spawn_task time =
-  lwt () = Lwt_unix.sleep time in
+  Lwt_unix.sleep time >>= fun () ->
   let state = Random.State.make seed in
   let result,command = Parallel.process task in
   command (Some (`Start state));
@@ -40,7 +40,7 @@ let spawn_task time =
 
 let main_dispatcher () =
   let delays = Array.to_list (Array.init tasks (fun _ -> Random.float 4.)) in
-  match_lwt Lwt_list.map_p spawn_task delays with
+  Lwt_list.map_p spawn_task delays >>= function
   | Some r :: rs -> return (List.for_all (fun r' -> Some r = r') rs)
   | _ -> return_false
 

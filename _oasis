@@ -1,20 +1,20 @@
 OASISFormat: 0.3
-Name:        lwt_parallel
-Version:     0.1.0
+Name:        lwt-parallel
+Version:     0.1.1
 Synopsis:    Lwt-enabled parallel computing library
 Authors:     Ivan Gotovchits <ivg@ieee.org>
 License:     MIT
 Plugins:     META (0.3), StdFiles (0.3), DevFiles (0.3)
 
-Library lwt_parallel
+Library "lwt-parallel"
   Path:       lib
   BuildTools: ocamlbuild
-  BuildDepends: lwt, lwt.unix, lwt.syntax
+  BuildDepends: lwt, lwt.unix
   Modules:    Parallel
 
 Executable run_tests
   Path:       lib_test
   Install:    false
   BuildTools: ocamlbuild
-  BuildDepends: lwt_parallel
+  BuildDepends: lwt-parallel
   MainIs:     run_tests.ml

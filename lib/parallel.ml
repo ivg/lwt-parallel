@@ -43,9 +43,10 @@ end = struct
   let unlock_p fd = Lwt_unix.(lockf fd F_ULOCK 1)
 
   let with_p_lock fd f =
-    lwt () = lock_p fd in
-    lwt r = try_lwt f () with exn -> unlock_p fd >> fail exn in
-    unlock_p fd >> return r
+    lock_p fd >>= fun () ->
+    try_bind f
+      (fun r -> unlock_p fd >>= fun () -> return r)
+      (fun exn -> unlock_p fd >>= fun () -> fail exn) 
 
   let with_lock m f =
     Lwt_mutex.with_lock m.t_guard (fun () -> with_p_lock m.p_guard f)
@@ -73,10 +74,10 @@ let buffered_io m =
 
 let run_transaction m f =
   let transaction () =
-    try_lwt
-      let ofd,tfd = buffered_io m in
-      f ofd tfd
-    with exn -> error ~exn "master i/o" >> fail exn in
+    let ofd,tfd = buffered_io m in
+    try_bind (fun () -> f ofd tfd)
+      return
+      (fun exn -> error ~exn "master i/o" >>= fun () -> fail exn) in
   Mutex.with_lock m.lck transaction
 
 let shutdown fd cmd =
@@ -97,55 +98,57 @@ let make_connection fd =
       shutdown fd Unix.SHUTDOWN_RECEIVE;
       return_unit
     method close =
-      Lwt_io.close self#wo >> Lwt_io.close self#ro >>
+      Lwt_io.close self#wo >>= fun () -> 
+      Lwt_io.close self#ro >>= fun () ->
       Lwt_unix.close fd
   end
 
 let write_value fd v =
-  try_lwt
-    Lwt_io.write_value ~flags:[Marshal.Closures] fd v
-    >> Lwt_io.flush fd
-  with exn -> error ~exn "write_value failed"
+  try_bind 
+    (fun () -> Lwt_io.write_value ~flags:[Marshal.Closures] fd v)
+    (fun () -> Lwt_io.flush fd)
+    (fun exn -> error ~exn "write_value failed")
 
 let worker_thread exec =
   let recv of_fd push =
     let rec loop () =
-      lwt a = Lwt_io.read_value of_fd in
+      Lwt_io.read_value of_fd >>= fun a ->
       push (Some a);
       loop () in
-    try_lwt loop ()
-    with End_of_file -> return_unit
-       | exn  -> error ~exn "Process exited with"
-    finally return (push None) in
+    catch loop
+      (function
+        | End_of_file -> return_unit
+        | exn  -> error ~exn "Process exited with") >>= fun () ->
+    return (push None) in
   let send to_fd of_stream =
-    try_lwt
-      Lwt_stream.iter_s (write_value to_fd) of_stream
-    with exn -> error ~exn "parallel write failed" in
+    catch 
+      (fun () -> Lwt_stream.iter_s (write_value to_fd) of_stream)
+      (fun exn -> error ~exn "parallel write failed") in
   let work fd =
     let conn = make_connection fd in
     let astream,apush = Lwt_stream.create () in
     let bstream,bpush = Lwt_stream.create () in
-    let recv_t = recv conn#ro apush >> conn#read_finished in
-    let send_t = send conn#wo bstream >> conn#write_finished in
+    let recv_t = recv conn#ro apush >>= fun () -> conn#read_finished in
+    let send_t = send conn#wo bstream >>= fun () -> conn#write_finished in 
     let exec_t = exec (astream,bpush) in
-    async (fun () -> (recv_t <&> send_t) >> conn#close);
+    async (fun () -> (recv_t <&> send_t) >>= fun () -> conn#close);
     exec_t in
   let sock = Lwt_unix.(socket PF_UNIX SOCK_STREAM 0) in
   let () = try
       Lwt_unix.bind sock (socket_name (Unix.getpid ()))
     with exn -> ign_error ~exn "bind failed" in
   Lwt_unix.listen sock 0;
-  lwt fd,addr = Lwt_unix.accept sock in
+  Lwt_unix.accept sock >>= fun (fd,addr) ->
   work fd
 
 let create_worker exec =
   flush_all ();
   match Lwt_unix.fork () with
-    | 0  -> exit (Lwt_main.run (
-      try_lwt worker_thread exec
-      with exn -> error ~exn "Subprocess failed" >> return 1))
+  | 0  -> exit (Lwt_main.run (
+      catch (fun () -> worker_thread exec)
+        (fun exn -> error ~exn "Subprocess failed" >>= fun () -> return 1)))
 
-    | pid -> socket_name pid
+  | pid -> socket_name pid
 
 
 let rec reap n =
@@ -181,31 +184,33 @@ let init () =
     init_master (of_master,to_master) pid
 
 
-let unlink_addr addr =
-  try_lwt
-    let open Lwt_unix in match addr with
-    | ADDR_UNIX filename -> unlink filename
-    | ADDR_INET _ -> return_unit
-  with exn -> error ~exn "unlink failed"
+let unlink_addr addr = match addr with
+  | Unix.ADDR_UNIX filename -> 
+    catch (fun () -> Lwt_unix.unlink filename)
+      (fun exn -> error ~exn "unlink failed")
+  | Unix.ADDR_INET _ -> return_unit
 
 let open_connection addr =
   let open Unix in
   let rec loop () =
     let fd =
       Lwt_unix.socket (domain_of_sockaddr addr) SOCK_STREAM 0 in
-    try_lwt
-      lwt () = Lwt_unix.connect fd addr in
-      return fd
-    with Unix_error (ENOENT,_,_)
-       | Unix_error (ECONNREFUSED,_,_) -> Lwt_unix.close fd >> loop ()
-       | exn -> error ~exn "cannot open connection" >> fail exn in
+    catch
+      (fun () -> Lwt_unix.connect fd addr >>= fun () -> return fd)
+      (function
+        | Unix_error (ENOENT,_,_)
+        | Unix_error (ECONNREFUSED,_,_) ->
+          Lwt_unix.close fd >>= fun () -> loop ()
+        | exn -> error ~exn "cannot open connection" >>= fun () -> fail exn) in
   let getfd = loop () >|= (fun fd -> `Socket fd) in
-  let timer = Lwt_unix.sleep 5. >> return `Timeout in
-  lwt fd = match_lwt getfd <?> timer with
+  let timer = Lwt_unix.sleep 5. >>= fun () -> return `Timeout in
+
+  let fd = (getfd <?> timer) >>= function 
     | `Socket fd -> return fd
     | `Timeout ->
       fail (Unix_error (ETIMEDOUT, "open_connection","timeout")) in
-  unlink_addr addr >> return (make_connection fd)
+  fd >>= fun fd -> unlink_addr addr >>= fun () ->
+  return (make_connection fd)
 
 let create_client f io =
   let astream,apush = Lwt_stream.create () in
@@ -213,25 +218,25 @@ let create_client f io =
   let io_thread () =
     let puller ro_chan =
       let rec loop () =
-        lwt b = Lwt_io.read_value ro_chan in
+        Lwt_io.read_value ro_chan >>= fun b ->
         bpush (Some b);
         loop () in
-      try_lwt loop () with
-      | End_of_file -> return (bpush None)
-      | exn -> bpush None; error ~exn "Client died unexpectedly" in
+      catch loop (function
+          | End_of_file -> return (bpush None)
+          | exn -> bpush None; error ~exn "Client died unexpectedly") in
     let pusher wo_chan =
-      try_lwt
-        Lwt_stream.iter_s (write_value wo_chan) astream
-      with exn -> error ~exn "parallel task failed" in
+      catch
+        (fun () -> Lwt_stream.iter_s (write_value wo_chan) astream)
+        (fun exn -> error ~exn "parallel task failed") in
     let connect_to_client () =
       run_transaction io (fun of_master to_master ->
-          lwt () = write_value to_master f in
-          lwt addr = Lwt_io.read_value of_master in
+          write_value to_master f >>= fun () ->
+          Lwt_io.read_value of_master >>= fun addr ->
           open_connection addr) in
-    lwt chan = connect_to_client () in
-    let pull_t = puller chan#ro >> chan#read_finished  in
-    let push_t = pusher chan#wo >> chan#write_finished in
-    (pull_t <&> push_t) >> chan#close in
+    connect_to_client () >>= fun chan ->
+    let pull_t = puller chan#ro >>= fun () -> chan#read_finished  in
+    let push_t = pusher chan#wo >>= fun () -> chan#write_finished in
+    (pull_t <&> push_t) >>= fun () -> chan#close in
   async io_thread;
   bstream,apush
 
