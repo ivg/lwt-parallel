@@ -242,7 +242,7 @@ let create_client f io =
 
 let process f = match !master with
   | Some t -> create_client f t
-  | None -> failwith "Multiprocessor"
+  | None -> failwith "Multiprocessor - check if init was called"
 
 let run exec =
   let rec child_f (astream,bpush) =
