@@ -18,7 +18,7 @@ let make_name ?(suffix="") pid =
 
 let socket_name pid = Unix.ADDR_UNIX (make_name pid)
 
-
+let bind_socket = Lwt_unix.Versioned.bind_2 [@warning "-3"]
 
 module Mutex : sig
   type t
@@ -134,9 +134,9 @@ let worker_thread exec =
     async (fun () -> (recv_t <&> send_t) >>= fun () -> conn#close);
     exec_t in
   let sock = Lwt_unix.(socket PF_UNIX SOCK_STREAM 0) in
-  let () = try
-      Lwt_unix.bind sock (socket_name (Unix.getpid ()))
-    with exn -> ign_error ~exn "bind failed" in
+  Lwt.catch (fun () ->
+      bind_socket sock (socket_name (Unix.getpid ())))
+    (fun exn -> error ~exn "bind failed") >>= fun () ->
   Lwt_unix.listen sock 0;
   Lwt_unix.accept sock >>= fun (fd,addr) ->
   work fd
