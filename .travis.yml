@@ -1,0 +1,19 @@
+language: c
+install: wget https://raw.githubusercontent.com/ocaml/ocaml-travisci-skeleton/master/.travis-opam.sh
+script: bash -ex .travis-opam.sh
+sudo: false
+addons:
+  apt:
+    sources:
+    - avsm
+    packages:
+    - m4
+    - ocaml
+    - ocaml-base
+    - ocaml-base-nox
+    - ocaml-compiler-libs
+    - ocaml-native-compilers
+    - ocaml-nox
+
+env:
+  - FORK_USER=talex5 FORK_BRANCH=containers OPAMYES=true PACKAGE=lwt-parallel OCAML_VERSION=latest TESTS=true
