@@ -1,5 +1,6 @@
 open Lwt
 open Lwt_log
+open Printf
 
 exception Exited
 exception Error
@@ -12,7 +13,7 @@ let make_name ?(suffix="") pid =
   let base = basename Sys.executable_name in
   let base =
     try chop_extension base with Invalid_argument _ -> base in
-  let name = Printf.sprintf "%s-%d%s" base pid suffix in
+  let name = sprintf "%s-%d%s" base pid suffix in
   concat "/tmp" name
 
 
@@ -53,6 +54,7 @@ end = struct
 end
 
 type 'c master = {
+  cld: int;
   ofd: 'c;
   tfd: 'c;
   lck: Mutex.t;
@@ -62,8 +64,27 @@ let master = ref None
 
 let pid = Unix.getpid ()
 
+let rec reap n =
+  try
+    match Unix.waitpid [Unix.WNOHANG] (-1) with
+    | 0,_ -> ()
+    | _   -> reap n
+  with Unix.Unix_error (Unix.ECHILD,_,_) -> ()
+     | exn -> ign_error ~exn "reap failed"
+
+let cleanup () =
+  match !master with
+  | None -> ()
+  | Some {ofd; tfd; cld} ->
+    Unix.close ofd;
+    Unix.close tfd;
+    Unix.kill cld Sys.sigterm;
+    master := None
+
 let init_master (ofd,tfd) pid =
-  master := Some {ofd;tfd;lck = Mutex.create pid}
+  at_exit cleanup;
+  if !master = None then
+    master := Some {ofd;tfd;lck = Mutex.create pid; cld=pid}
 
 let buffered_io m =
   let of_unix_fd mode fd =
@@ -150,15 +171,6 @@ let create_worker exec =
 
   | pid -> socket_name pid
 
-
-let rec reap n =
-  try
-    match Unix.waitpid [Unix.WNOHANG] (-1) with
-    | 0,_ -> ()
-    | _   -> reap n
-  with Unix.Unix_error (Unix.ECHILD,_,_) -> ()
-     | exn -> ign_error ~exn "reap failed"
-
 let init () =
   let of_master,to_main = Unix.pipe () in
   let of_main,to_master = Unix.pipe () in
@@ -176,7 +188,7 @@ let init () =
           Marshal.to_channel to_main addr [];
           flush to_main;
         with End_of_file -> exit 0
-           | exn         -> exit 1 in
+           | exn -> exit 1 in
       loop () in
     loop ()
   | pid ->
