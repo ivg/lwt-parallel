@@ -1,6 +1,6 @@
 opam-version: "1.2"
 name: "lwt-parallel"
-version: "0.1.1"
+version: "master"
 maintainer: "Ivan Gotovchits <ivg@ieee.org>"
 authors: "Ivan Gotovchits <ivg@ieee.org>"
 homepage: "https://github.com/ivg/parallel"
@@ -15,7 +15,8 @@ build: [
 install: [make "install"]
 remove: ["ocamlfind" "remove" "lwt-parallel"]
 depends: [
-   "lwt"
+   "base-unix"
+   "lwt"       {>= "2.7.0"}
    "ocamlfind" {build}
    "oasis"     {build}
 ]
