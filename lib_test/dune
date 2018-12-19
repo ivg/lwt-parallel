@@ -1,0 +1,8 @@
+(executable
+  (name run_tests)
+  (libraries lwt lwt-parallel logs.fmt fmt.tty))
+
+(alias
+  (name runtest)
+  (deps run_tests.exe)
+  (action (run %{deps})))
