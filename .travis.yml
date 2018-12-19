@@ -1,19 +1,15 @@
 language: c
-install: wget https://raw.githubusercontent.com/ocaml/ocaml-travisci-skeleton/master/.travis-opam.sh
-script: bash -ex .travis-opam.sh
 sudo: false
-addons:
-  apt:
-    sources:
-    - avsm
-    packages:
-    - m4
-    - ocaml
-    - ocaml-base
-    - ocaml-base-nox
-    - ocaml-compiler-libs
-    - ocaml-native-compilers
-    - ocaml-nox
-
+services:
+  - docker
+install: wget https://raw.githubusercontent.com/ocaml/ocaml-travisci-skeleton/master/.travis-docker.sh
+script: bash -ex ./.travis-docker.sh
 env:
-  - FORK_USER=talex5 FORK_BRANCH=containers OPAMYES=true PACKAGE=lwt-parallel OCAML_VERSION=latest TESTS=true
+  global:
+  - PINS="lwt-parallel:."
+  matrix:
+  - PACKAGE="lwt-parallel"  DISTRO="ubuntu-16.04"    OCAML_VERSION="4.07.1"
+  - PACKAGE="lwt-parallel"  DISTRO="ubuntu-16.04"    OCAML_VERSION="4.06.0"
+  - PACKAGE="lwt-parallel"  DISTRO="ubuntu-16.04"    OCAML_VERSION="4.04.2"
+  - PACKAGE="lwt-parallel"  DISTRO="ubuntu-16.04"    OCAML_VERSION="4.03.2"
+  - PACKAGE="lwt-parallel"  DISTRO="debian-unstable" OCAML_VERSION="4.07.1"
