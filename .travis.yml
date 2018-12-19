@@ -11,5 +11,5 @@ env:
   - PACKAGE="lwt-parallel"  DISTRO="ubuntu-16.04"    OCAML_VERSION="4.07.1"
   - PACKAGE="lwt-parallel"  DISTRO="ubuntu-16.04"    OCAML_VERSION="4.06.0"
   - PACKAGE="lwt-parallel"  DISTRO="ubuntu-16.04"    OCAML_VERSION="4.04.2"
-  - PACKAGE="lwt-parallel"  DISTRO="ubuntu-16.04"    OCAML_VERSION="4.03.2"
+  - PACKAGE="lwt-parallel"  DISTRO="ubuntu-16.04"    OCAML_VERSION="4.03.0"
   - PACKAGE="lwt-parallel"  DISTRO="debian-unstable" OCAML_VERSION="4.07.1"
