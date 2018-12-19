@@ -1,5 +1,4 @@
 open Lwt
-open Lwt_log
 open Printf
 
 exception Exited
@@ -47,7 +46,7 @@ end = struct
     lock_p fd >>= fun () ->
     try_bind f
       (fun r -> unlock_p fd >>= fun () -> return r)
-      (fun exn -> unlock_p fd >>= fun () -> fail exn) 
+      (fun exn -> unlock_p fd >>= fun () -> fail exn)
 
   let with_lock m f =
     Lwt_mutex.with_lock m.t_guard (fun () -> with_p_lock m.p_guard f)
@@ -63,6 +62,12 @@ type 'c master = {
 let master = ref None
 
 let pid = Unix.getpid ()
+
+let error ~exn msg =
+  Logs_lwt.err (fun m -> m "%s: %s" msg (Printexc.to_string exn))
+
+let ign_error ~exn msg =
+  error ~exn msg |> ignore
 
 let rec reap n =
   try
@@ -119,13 +124,13 @@ let make_connection fd =
       shutdown fd Unix.SHUTDOWN_RECEIVE;
       return_unit
     method close =
-      Lwt_io.close self#wo >>= fun () -> 
+      Lwt_io.close self#wo >>= fun () ->
       Lwt_io.close self#ro >>= fun () ->
       Lwt_unix.close fd
   end
 
 let write_value fd v =
-  try_bind 
+  try_bind
     (fun () -> Lwt_io.write_value ~flags:[Marshal.Closures] fd v)
     (fun () -> Lwt_io.flush fd)
     (fun exn -> error ~exn "write_value failed")
@@ -142,7 +147,7 @@ let worker_thread exec =
         | exn  -> error ~exn "Process exited with") >>= fun () ->
     return (push None) in
   let send to_fd of_stream =
-    catch 
+    catch
       (fun () -> Lwt_stream.iter_s (write_value to_fd) of_stream)
       (fun exn -> error ~exn "parallel write failed") in
   let work fd =
@@ -150,7 +155,7 @@ let worker_thread exec =
     let astream,apush = Lwt_stream.create () in
     let bstream,bpush = Lwt_stream.create () in
     let recv_t = recv conn#ro apush >>= fun () -> conn#read_finished in
-    let send_t = send conn#wo bstream >>= fun () -> conn#write_finished in 
+    let send_t = send conn#wo bstream >>= fun () -> conn#write_finished in
     let exec_t = exec (astream,bpush) in
     async (fun () -> (recv_t <&> send_t) >>= fun () -> conn#close);
     exec_t in
@@ -197,7 +202,7 @@ let init () =
 
 
 let unlink_addr addr = match addr with
-  | Unix.ADDR_UNIX filename -> 
+  | Unix.ADDR_UNIX filename ->
     catch (fun () -> Lwt_unix.unlink filename)
       (fun exn -> error ~exn "unlink failed")
   | Unix.ADDR_INET _ -> return_unit
@@ -217,7 +222,7 @@ let open_connection addr =
   let getfd = loop () >|= (fun fd -> `Socket fd) in
   let timer = Lwt_unix.sleep 5. >>= fun () -> return `Timeout in
 
-  let fd = (getfd <?> timer) >>= function 
+  let fd = (getfd <?> timer) >>= function
     | `Socket fd -> return fd
     | `Timeout ->
       fail (Unix_error (ETIMEDOUT, "open_connection","timeout")) in

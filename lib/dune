@@ -1,0 +1,5 @@
+(library
+  (name parallel)
+  (public_name lwt-parallel)
+  (libraries lwt.unix logs.lwt)
+  (flags (:standard -w -9-27-32-34-38-39)))

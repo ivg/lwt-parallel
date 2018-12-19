@@ -1,22 +1,19 @@
-opam-version: "1.2"
+opam-version: "2.0"
 name: "lwt-parallel"
 version: "master"
 maintainer: "Ivan Gotovchits <ivg@ieee.org>"
 authors: "Ivan Gotovchits <ivg@ieee.org>"
 homepage: "https://github.com/ivg/parallel"
 bug-reports: "https://github.com/ivg/parallel/issues"
-dev-repo: "https://github.com/ivg/parallel.git"
+dev-repo: "git+https://github.com/ivg/parallel.git"
 license: "MIT"
 build: [
-  ["oasis" "setup"]
-  ["./configure" "--prefix=%{prefix}%"]
-  [make]
+  ["dune" "build" "-p" name "-j" jobs]
 ]
-install: [make "install"]
-remove: ["ocamlfind" "remove" "lwt-parallel"]
 depends: [
    "base-unix"
    "lwt"       {>= "2.7.0"}
-   "ocamlfind" {build}
-   "oasis"     {build}
+   "dune"      {build}
+   "logs"
 ]
+synopsis: "Lwt-enabled parallel computing library"
