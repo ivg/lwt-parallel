@@ -1,19 +1,14 @@
 open Lwt
-open Lwt_log
 
-let setup_logger () =
-  let logger = Lwt_log.channel
-    (* ~facility:`User *)
-    ~close_mode:`Keep
-    ~template:"parallel-$pid:$(date).$(milliseconds) $(section): $(message)"
-    ~channel:Lwt_io.stderr
-    (* ~file_name:"parallax.log" *)
-    () in
-  Lwt_log.default := logger
+let setup_log level =
+  Fmt_tty.setup_std_outputs ();
+  Logs.set_level level;
+  Logs.set_reporter (Logs_fmt.reporter ());
+  ()
 
-let _ = setup_logger ()
-
-let _ = Parallel.init ()
+let _ =
+  setup_log (Some Debug);
+  Parallel.init ()
 
 let seed = [| 7; 8; 42; 56 |]
 let tasks = 128
