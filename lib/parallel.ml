@@ -24,11 +24,12 @@ module Mutex : sig
   type t
   val create: int -> t
   val with_lock: t -> (unit -> 'a Lwt.t) -> 'a Lwt.t
-
+  val remove : t -> unit
 end = struct
   type t = {
     p_guard : Lwt_unix.file_descr;
-    t_guard : Lwt_mutex.t
+    t_guard : Lwt_mutex.t;
+    path : string;
   }
 
   let create pid =
@@ -37,6 +38,7 @@ end = struct
     {
       p_guard = Lwt_unix.of_unix_file_descr fd;
       t_guard = Lwt_mutex.create ();
+      path = name;
     }
 
   let lock_p fd = Lwt_unix.(lockf fd F_LOCK 1)
@@ -50,6 +52,9 @@ end = struct
 
   let with_lock m f =
     Lwt_mutex.with_lock m.t_guard (fun () -> with_p_lock m.p_guard f)
+
+  let remove {path} =
+    Unix.unlink path
 end
 
 type 'c master = {
@@ -75,19 +80,19 @@ let rec reap n =
     | 0,_ -> ()
     | _   -> reap n
   with Unix.Unix_error (Unix.ECHILD,_,_) -> ()
-     | exn -> ign_error ~exn "reap failed"
+     | exn -> Logs.err (fun m -> m "reap failed")
 
 let cleanup () =
   match !master with
   | None -> ()
-  | Some {ofd; tfd; cld} ->
+  | Some {ofd; tfd; cld; lck} ->
     Unix.close ofd;
     Unix.close tfd;
     Unix.kill cld Sys.sigterm;
+    Mutex.remove lck;
     master := None
 
 let init_master (ofd,tfd) pid =
-  at_exit cleanup;
   if !master = None then
     master := Some {ofd;tfd;lck = Mutex.create pid; cld=pid}
 
@@ -180,7 +185,7 @@ let init () =
   let of_master,to_main = Unix.pipe () in
   let of_main,to_master = Unix.pipe () in
   flush_all ();
-  match Lwt_unix.fork () with
+  match Unix.fork () with
   | 0 ->
     init_master (of_master,to_master) (Unix.getpid ());
     Sys.set_signal Sys.sigchld (Sys.Signal_handle reap);
@@ -197,6 +202,7 @@ let init () =
       loop () in
     loop ()
   | pid ->
+    at_exit cleanup;
     Unix.(List.iter close [of_main; to_main]);
     init_master (of_master,to_master) pid
 
