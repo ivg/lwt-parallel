@@ -13,7 +13,7 @@ build: [
 depends: [
    "base-unix"
    "lwt"       {>= "2.7.0"}
-   "dune"      {build}
+   "dune"
    "logs"
 ]
 synopsis: "Lwt-enabled parallel computing library"

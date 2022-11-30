@@ -1,4 +1,38 @@
 open Lwt
+open Lwt.Syntax
+
+
+type to_sub = [ `Start of int * int array | `Stop ]
+type of_sub = float
+
+let to_sub : to_sub Parallel.io =
+  Parallel.Io.define
+    ~put:(fun chan -> function
+        | `Stop ->
+          Lwt_io.write_line chan "stop"
+        | `Start (name,seed) ->
+          Lwt_io.write_line chan "start" >>= fun () ->
+          Lwt_io.write_int chan name >>= fun () ->
+          Lwt_io.write_int chan (Array.length seed) >>= fun () ->
+          Array.to_list seed |>
+          Lwt_list.iter_s (Lwt_io.write_int chan))
+    ~get:(fun chan ->
+        Lwt_io.read_line chan >>= function
+        | "stop" -> Lwt.return `Stop
+        | "start" ->
+          let* name = Lwt_io.read_int chan in
+          let* seed_size = Lwt_io.read_int chan in
+          let seed = Array.make seed_size 0 in
+          List.init seed_size (fun x -> x)|>
+          Lwt_list.iter_s (fun i ->
+              let+ x = Lwt_io.read_int chan in
+              seed.(i) <- x) >|= fun () ->
+          `Start (name, seed)
+        | _ -> failwith "unknown command")
+
+let of_sub = Parallel.Io.define
+    ~put:Lwt_io.write_float64
+    ~get:Lwt_io.read_float64
 
 let setup_log level =
   Fmt_tty.setup_std_outputs ();
@@ -13,7 +47,8 @@ let delay = 4. *. atan 1.
 
 let task (data,push) =
   Lwt_stream.next data >>= function
-  | `Start (name,state) ->
+  | `Start (name,seed) ->
+    let state = Random.State.make seed in
     Logs_lwt.debug (fun m -> m "<task %03d>: started" name) >>= fun () ->
     Lwt_unix.sleep (Random.float delay) >>= fun () ->
     let array = Array.init task_size (fun _ -> Random.State.float state 1.0) in
@@ -27,9 +62,9 @@ let task (data,push) =
 
 let spawn_task (name,time) =
   Lwt_unix.sleep time >>= fun () ->
-  let state = Random.State.make seed in
-  let result,command = Parallel.process task in
-  command (Some (`Start (name,state)));
+  let result,command =
+    Parallel.process ~out:to_sub ~inc:of_sub task in
+  command (Some (`Start (name,seed)));
   command (Some `Stop);
   Lwt_stream.get result
 
@@ -39,6 +74,8 @@ let main_dispatcher () =
   Lwt_list.map_p spawn_task delays >>= function
   | Some r :: rs -> return (List.for_all (fun r' -> Some r = r') rs)
   | _ -> return_false
+
+
 
 let () =
   setup_log (Some Debug);

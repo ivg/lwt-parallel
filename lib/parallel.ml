@@ -108,7 +108,8 @@ let run_transaction m f =
     let ofd,tfd = buffered_io m in
     try_bind (fun () -> f ofd tfd)
       return
-      (fun exn -> error ~exn "master i/o" >>= fun () -> fail exn) in
+      (fun exn ->
+         error ~exn "master i/o" >>= fun () -> fail exn) in
   Mutex.with_lock m.lck transaction
 
 let shutdown fd cmd =
@@ -134,16 +135,34 @@ let make_connection fd =
       Lwt_unix.close fd
   end
 
-let write_value fd v =
-  try_bind
-    (fun () -> Lwt_io.write_value ~flags:[Marshal.Closures] fd v)
-    (fun () -> Lwt_io.flush fd)
-    (fun exn -> error ~exn "write_value failed")
+type 'a io = {
+  put : Lwt_io.output_channel -> 'a -> unit Lwt.t;
+  get : Lwt_io.input_channel -> 'a Lwt.t
+}
 
-let worker_thread exec =
+let marshaling : 'a io = {
+  put = Lwt_io.write_value
+      ~flags:[Marshal.Closures];
+  get = Lwt_io.read_value;
+}
+
+module Io = struct
+  let define ~put ~get = {put; get}
+  let put io = io.put
+  let get io = io.get
+  let marshaling = marshaling
+end
+
+let write io fd v =
+  try_bind
+    (fun () -> io.put fd v)
+    (fun () -> Lwt_io.flush fd)
+    (fun exn -> error ~exn "write failed")
+
+let worker_thread inc out exec =
   let recv of_fd push =
     let rec loop () =
-      Lwt_io.read_value of_fd >>= fun a ->
+      out.get of_fd >>= fun a ->
       push (Some a);
       loop () in
     catch loop
@@ -153,7 +172,7 @@ let worker_thread exec =
     return (push None) in
   let send to_fd of_stream =
     catch
-      (fun () -> Lwt_stream.iter_s (write_value to_fd) of_stream)
+      (fun () -> Lwt_stream.iter_s (write inc to_fd) of_stream)
       (fun exn -> error ~exn "parallel write failed") in
   let work fd =
     let conn = make_connection fd in
@@ -172,16 +191,17 @@ let worker_thread exec =
   Lwt_unix.accept sock >>= fun (fd,addr) ->
   work fd
 
-let create_worker exec =
+let create_worker inc out exec =
   flush_all ();
   match Lwt_unix.fork () with
   | 0  -> exit (Lwt_main.run (
-      catch (fun () -> worker_thread exec)
+      catch (fun () -> worker_thread inc out exec)
         (fun exn -> error ~exn "Subprocess failed" >>= fun () -> return 1)))
 
   | pid -> socket_name pid
 
 let init () =
+  assert (Option.is_none !master);
   let of_master,to_main = Unix.pipe () in
   let of_main,to_master = Unix.pipe () in
   flush_all ();
@@ -193,8 +213,10 @@ let init () =
     let to_main = Unix.out_channel_of_descr to_main in
     let rec loop () =
       let () = try
-          let proc = (Marshal.from_channel of_main) in
-          let addr = create_worker proc in
+          let proc = Marshal.from_channel of_main in
+          let inc = Marshal.from_channel of_main in
+          let out = Marshal.from_channel of_main in
+          let addr = create_worker inc out proc in
           Marshal.to_channel to_main addr [];
           flush to_main;
         with End_of_file -> exit 0
@@ -235,13 +257,13 @@ let open_connection addr =
   fd >>= fun fd -> unlink_addr addr >>= fun () ->
   return (make_connection fd)
 
-let create_client f io =
+let create_client inc out f master =
   let astream,apush = Lwt_stream.create () in
   let bstream,bpush = Lwt_stream.create () in
   let io_thread () =
     let puller ro_chan =
       let rec loop () =
-        Lwt_io.read_value ro_chan >>= fun b ->
+        inc.get ro_chan >>= fun b ->
         bpush (Some b);
         loop () in
       catch loop (function
@@ -249,11 +271,13 @@ let create_client f io =
           | exn -> bpush None; error ~exn "Client died unexpectedly") in
     let pusher wo_chan =
       catch
-        (fun () -> Lwt_stream.iter_s (write_value wo_chan) astream)
+        (fun () -> Lwt_stream.iter_s (write out wo_chan) astream)
         (fun exn -> error ~exn "parallel task failed") in
     let connect_to_client () =
-      run_transaction io (fun of_master to_master ->
-          write_value to_master f >>= fun () ->
+      run_transaction master (fun of_master to_master ->
+          write marshaling to_master f >>= fun () ->
+          write marshaling to_master inc >>= fun () ->
+          write marshaling to_master out >>= fun () ->
           Lwt_io.read_value of_master >>= fun addr ->
           open_connection addr) in
     connect_to_client () >>= fun chan ->
@@ -263,15 +287,16 @@ let create_client f io =
   async io_thread;
   bstream,apush
 
-let process f = match !master with
-  | Some t -> create_client f t
+let process ?(inc=marshaling) ?(out=marshaling) f =
+  match !master with
+  | Some t -> create_client inc out f t
   | None -> failwith "Multiprocessor - check if init was called"
 
-let run exec =
+let run ?inc ?out exec =
   let rec child_f (astream,bpush) =
     let bs = Lwt_stream.map_s exec astream in
     Lwt_stream.iter (fun b -> bpush (Some b)) bs in
-  let stream,push = process child_f in
+  let stream,push = process ?inc ?out child_f in
   let guard = Lwt_mutex.create () in
   let master_f a =
     Lwt_mutex.with_lock guard (fun () ->
