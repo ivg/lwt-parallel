@@ -54,7 +54,7 @@ end = struct
     Lwt_mutex.with_lock m.t_guard (fun () -> with_p_lock m.p_guard f)
 
   let remove {path} =
-    Unix.unlink path
+    if Sys.file_exists path then Unix.unlink path
 end
 
 type 'c master = {
