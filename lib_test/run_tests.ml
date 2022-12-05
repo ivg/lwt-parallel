@@ -35,7 +35,6 @@ let of_sub = Parallel.Io.define
     ~get:Lwt_io.read_float64
 
 let setup_log level =
-  Fmt_tty.setup_std_outputs ();
   Logs.set_level level;
   Logs.set_reporter (Logs_fmt.reporter ());
   ()

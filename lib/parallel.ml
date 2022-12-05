@@ -1,5 +1,4 @@
 open Lwt
-open Printf
 
 exception Exited
 exception Error
@@ -14,7 +13,7 @@ let make_name ?(suffix="") pid =
   let base = basename Sys.executable_name in
   let base =
     try chop_extension base with Invalid_argument _ -> base in
-  let name = sprintf "%s-%d-%d%s" base pid !snapshots suffix in
+  let name = Format.asprintf "%s-%d-%d%s" base pid !snapshots suffix in
   concat "/tmp" name
 
 
