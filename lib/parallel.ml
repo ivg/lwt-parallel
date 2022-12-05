@@ -7,18 +7,21 @@ exception Error
 type 'a t = 'a Lwt_stream.t
 type ('a,'b) pipe = ('a Lwt_stream.t * ('b option -> unit))
 
+let snapshots = ref 0
+
 let make_name ?(suffix="") pid =
   let open Filename in
   let base = basename Sys.executable_name in
   let base =
     try chop_extension base with Invalid_argument _ -> base in
-  let name = sprintf "%s-%d%s" base pid suffix in
+  let name = sprintf "%s-%d-%d%s" base pid !snapshots suffix in
   concat "/tmp" name
 
 
 let socket_name pid = Unix.ADDR_UNIX (make_name pid)
 
 let bind_socket = Lwt_unix.Versioned.bind_2 [@warning "-3"]
+
 
 module Mutex : sig
   type t
@@ -31,6 +34,7 @@ end = struct
     t_guard : Lwt_mutex.t;
     path : string;
   }
+
 
   let create pid =
     let name = make_name ~suffix:".lock" pid in
@@ -57,16 +61,14 @@ end = struct
     if Sys.file_exists path then Unix.unlink path
 end
 
-type 'c master = {
+type snapshot = {
   cld: int;
-  ofd: 'c;
-  tfd: 'c;
+  ofd: Unix.file_descr;
+  tfd: Unix.file_descr;
   lck: Mutex.t;
 }
 
 let master = ref None
-
-let pid = Unix.getpid ()
 
 let error ~exn msg =
   Logs_lwt.err (fun m -> m "%s: %s" msg (Printexc.to_string exn))
@@ -82,19 +84,16 @@ let rec reap n =
   with Unix.Unix_error (Unix.ECHILD,_,_) -> ()
      | exn -> Logs.err (fun m -> m "reap failed")
 
-let cleanup () =
-  match !master with
-  | None -> ()
-  | Some {ofd; tfd; cld; lck} ->
-    Unix.close ofd;
-    Unix.close tfd;
-    Unix.kill cld Sys.sigterm;
-    Mutex.remove lck;
-    master := None
+let cleanup {ofd; tfd; cld; lck} =
+  Unix.close ofd;
+  Unix.close tfd;
+  Unix.kill cld Sys.sigterm;
+  Mutex.remove lck
 
-let init_master (ofd,tfd) pid =
-  if !master = None then
-    master := Some {ofd;tfd;lck = Mutex.create pid; cld=pid}
+
+let create_snapshot ofd tfd pid =
+  incr snapshots;
+  {ofd; tfd; lck=Mutex.create pid; cld=pid}
 
 let buffered_io m =
   let of_unix_fd mode fd =
@@ -200,14 +199,12 @@ let create_worker inc out exec =
 
   | pid -> socket_name pid
 
-let init () =
-  assert (Option.is_none !master);
+let snapshot () =
   let of_master,to_main = Unix.pipe () in
   let of_main,to_master = Unix.pipe () in
   flush_all ();
   match Unix.fork () with
   | 0 ->
-    init_master (of_master,to_master) (Unix.getpid ());
     Sys.set_signal Sys.sigchld (Sys.Signal_handle reap);
     let of_main = Unix.in_channel_of_descr  of_main in
     let to_main = Unix.out_channel_of_descr to_main in
@@ -224,10 +221,14 @@ let init () =
       loop () in
     loop ()
   | pid ->
-    at_exit cleanup;
+    let snapshot = create_snapshot of_master to_master pid in
+    at_exit (fun () -> cleanup snapshot);
     Unix.(List.iter close [of_main; to_main]);
-    init_master (of_master,to_master) pid
+    snapshot
 
+
+let init () =
+  master := Some (snapshot ())
 
 let unlink_addr addr = match addr with
   | Unix.ADDR_UNIX filename ->
@@ -287,19 +288,17 @@ let create_client inc out f master =
   async io_thread;
   bstream,apush
 
-let process ?(inc=marshaling) ?(out=marshaling) f =
-  match !master with
-  | Some t -> create_client inc out f t
-  | None -> failwith "Multiprocessor - check if init was called"
+let process ?snapshot ?(inc=marshaling) ?(out=marshaling) f =
+  match snapshot, !master with
+  | Some t,_ | _, Some t -> create_client inc out f t
+  | None,None -> failwith "Parallel: either specify a snapshot or run init"
 
-let run ?inc ?out exec =
+let run ?snapshot ?inc ?out exec =
   let rec child_f (astream,bpush) =
     let bs = Lwt_stream.map_s exec astream in
     Lwt_stream.iter (fun b -> bpush (Some b)) bs in
-  let stream,push = process ?inc ?out child_f in
-  let guard = Lwt_mutex.create () in
+  let stream,push = process ?snapshot ?inc ?out child_f in
   let master_f a =
-    Lwt_mutex.with_lock guard (fun () ->
-        push (Some a);
-        Lwt_stream.next stream) in
+    push (Some a);
+    Lwt_stream.next stream in
   master_f

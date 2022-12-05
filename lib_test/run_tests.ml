@@ -60,24 +60,30 @@ let task (data,push) =
     return (push (Some res))
   | `Stop -> return (push None)
 
-let spawn_task (name,time) =
+let spawn_task snapshot (name,time) =
   Lwt_unix.sleep time >>= fun () ->
   let result,command =
-    Parallel.process ~out:to_sub ~inc:of_sub task in
+    Parallel.process ~snapshot ~out:to_sub ~inc:of_sub task in
   command (Some (`Start (name,seed)));
   command (Some `Stop);
   Lwt_stream.get result
 
-let main_dispatcher () =
+let main_dispatcher snapshot =
   let delays = Array.to_list (Array.init tasks (fun i ->
       i,Random.float delay)) in
-  Lwt_list.map_p spawn_task delays >>= function
-  | Some r :: rs -> return (List.for_all (fun r' -> Some r = r') rs)
+  Lwt_list.map_p (spawn_task snapshot) delays >>= function
+  | Some r :: rs as total ->
+    return (List.length total = tasks && List.for_all (fun r' -> Some r = r') rs)
   | _ -> return_false
 
 
 
 let () =
   setup_log (Some Debug);
-  Parallel.init ();
-  Lwt_main.run (main_dispatcher () >|= fun r -> assert r)
+  let () = Parallel.init () in
+  let point1 = Parallel.snapshot () in
+  (* let point2 = Parallel.snapshot () in *)
+  let test p =
+    main_dispatcher p >|= fun r -> assert r in
+  Lwt_main.run (test point1);
+  print_endline "TESTS DONE"
