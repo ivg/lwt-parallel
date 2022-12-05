@@ -86,7 +86,17 @@ val run :
 (** Type safe pipe, with ['a] read end and ['b] write end*)
 type ('a,'b) pipe = 'a Lwt_stream.t * ('b option -> unit)
 
-(** [create process] executes function [process] in other process.*)
+(** [create process] executes function [process] in other process.
+
+    @param snapshot uses the snapshot as the fork point, if no
+    specified, uses the one created with [init ()], fails if
+    [init ()] wasn't run.
+
+    @param inc defines the serialization protocols for the incoming
+    (from the subprocess) messages, defaults to the use of marshaling.
+
+    @param out defines the serialization protocols for the outcoming
+    (to the subprocess) messages, defaults to the use of marshaling. *)
 val process :
   ?snapshot: snapshot ->
   ?inc: 'inc io ->
@@ -94,13 +104,26 @@ val process :
   (('out,'inc) pipe -> unit Lwt.t) -> ('inc,'out) pipe
 
 
+
+(** Serialization Protocols. *)
 module Io : sig
+
+  (** [define ~put ~get] defines a new serialization protocol.
+
+      The [put] function is responsible for writing the messages to
+      the channel.
+      The [get] function is responsible for reading the messages from
+      the channel. *)
   val define :
     put:(Lwt_io.output_channel -> 'a -> unit Lwt.t) ->
     get:(Lwt_io.input_channel -> 'a Lwt.t) -> 'a io
 
+  (** [put io chan x] uses protocol [io] to write [x] to [chan].  *)
   val put : 'a io -> Lwt_io.output_channel -> 'a -> unit Lwt.t
+
+  (** [get io chan] uses protocol [io] to read a message from [chan].  *)
   val get : 'a io -> Lwt_io.input_channel -> 'a Lwt.t
 
+  (** [marshalling io] uses the [Marshal] module to serialize messages.  *)
   val marshaling : 'a io
 end
