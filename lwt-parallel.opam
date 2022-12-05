@@ -15,5 +15,6 @@ depends: [
    "lwt"       {>= "2.7.0"}
    "dune"
    "logs"
+   "fmt"
 ]
 synopsis: "Lwt-enabled parallel computing library"
