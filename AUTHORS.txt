@@ -1,8 +1,0 @@
-(* OASIS_START *)
-(* DO NOT EDIT (digest: 517c12044b86ec946e30c2f51729e666) *)
-
-Authors of lwt-parallel:
-
-* Ivan Gotovchits <ivg@ieee.org>
-
-(* OASIS_STOP *)
