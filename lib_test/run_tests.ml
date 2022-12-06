@@ -41,7 +41,7 @@ let setup_log level =
 
 let seed = [| 7; 8; 42; 56 |]
 let tasks = 64
-let task_size = 4096 * 1024
+let task_size = min (4096 * 1024) (Sys.max_array_length / 2)
 let delay = 4. *. atan 1.
 
 let task (data,push) =

@@ -17,7 +17,7 @@ build: [
 
 depends: [
   "base-unix"
-  "dune"
+  "dune" {>= "1.6"}
   "fmt"
   "logs"
   "lwt"   {>= "2.7.0"}
