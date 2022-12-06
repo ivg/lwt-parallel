@@ -7,14 +7,20 @@ homepage: "https://github.com/ivg/parallel"
 bug-reports: "https://github.com/ivg/parallel/issues"
 dev-repo: "git+https://github.com/ivg/parallel.git"
 license: "MIT"
-build: [
-  ["dune" "build" "-p" name "-j" jobs]
-]
-depends: [
-   "base-unix"
-   "lwt"       {>= "2.7.0"}
-   "dune"
-   "logs"
-   "fmt"
-]
 synopsis: "Lwt-enabled parallel computing library"
+
+build: [
+  ["dune" "build" "@install" "-p" name "-j" jobs]
+  ["dune" "build" "@doc" "-p" name "-j" jobs] {with-doc}
+  ["dune" "runtest" "-p" name] {with-test}
+]
+
+depends: [
+  "base-unix"
+  "dune"
+  "fmt"
+  "logs"
+  "lwt"   {>= "2.7.0"}
+  "ocaml" {>= "4.08.0"}
+  "odoc" {with-doc}
+]
