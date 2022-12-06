@@ -13,9 +13,10 @@ let make_name ?(suffix="") pid =
   let base = basename Sys.executable_name in
   let base =
     try chop_extension base with Invalid_argument _ -> base in
-  let name = Format.asprintf "%s-%d-%d%s" base pid !snapshots suffix in
-  concat "/tmp" name
-
+  let name =
+    Format.asprintf "%s-%d-%d%s" base pid !snapshots suffix in
+  let tmp = Filename.get_temp_dir_name () in
+  concat tmp name
 
 let socket_name pid = Unix.ADDR_UNIX (make_name pid)
 
