@@ -1,5 +1,5 @@
 open Lwt
-open Lwt.Syntax
+open Lwt.Infix
 
 
 type to_sub = [ `Start of int * int array | `Stop ]
@@ -20,12 +20,12 @@ let to_sub : to_sub Parallel.io =
         Lwt_io.read_line chan >>= function
         | "stop" -> Lwt.return `Stop
         | "start" ->
-          let* name = Lwt_io.read_int chan in
-          let* seed_size = Lwt_io.read_int chan in
+          Lwt_io.read_int chan >>= fun name ->
+          Lwt_io.read_int chan >>= fun seed_size ->
           let seed = Array.make seed_size 0 in
-          List.init seed_size (fun x -> x)|>
+          List.init seed_size (fun x -> x) |>
           Lwt_list.iter_s (fun i ->
-              let+ x = Lwt_io.read_int chan in
+              Lwt_io.read_int chan >|= fun x ->
               seed.(i) <- x) >|= fun () ->
           `Start (name, seed)
         | _ -> failwith "unknown command")
