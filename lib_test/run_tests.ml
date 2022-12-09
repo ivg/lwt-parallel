@@ -22,8 +22,8 @@ let to_sub : to_sub Parallel.io =
         | "start" ->
           Lwt_io.read_int chan >>= fun name ->
           Lwt_io.read_int chan >>= fun seed_size ->
-          let seed = Array.make seed_size 0 in
-          List.init seed_size (fun x -> x) |>
+          let seed = Array.init seed_size (fun x -> x) in
+          Array.to_list seed |>
           Lwt_list.iter_s (fun i ->
               Lwt_io.read_int chan >|= fun x ->
               seed.(i) <- x) >|= fun () ->
