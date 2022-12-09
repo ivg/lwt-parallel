@@ -51,7 +51,7 @@ let task (data,push) =
     Logs_lwt.debug (fun m -> m "<task %03d>: started" name) >>= fun () ->
     Lwt_unix.sleep (Random.float delay) >>= fun () ->
     let array = Array.init task_size (fun _ -> Random.State.float state 1.0) in
-    let res = Float.abs @@ Array.fold_left
+    let res = abs_float @@ Array.fold_left
         (fun acc v -> if Random.State.bool state
           then sin (acc *. v) else cos (acc /. v))
         1.0 array *. 1e5 in
